@@ -1,0 +1,8 @@
+discord.py>=2.6.0
+python-dotenv
+supabase
+supabase_auth
+supabase_functions
+asyncpg
+python-dateutil
+psutil
