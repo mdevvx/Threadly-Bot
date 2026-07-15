@@ -105,13 +105,10 @@ def build_preview_layout(
     )
 
 
-def is_valid_url(url: str) -> bool:
-    """Basic scheme check, good enough to catch pasted-wrong-thing mistakes."""
-    return url.startswith(("http://", "https://"))
-
-
 class EmbedCreationModal(discord.ui.Modal, title="Create Welcome Container"):
-    """Modal for creating the welcome container, text and images together."""
+    """Modal for creating the welcome container's text content. Thumbnail
+    and image live in a separate modal (see ImageUploadModal) since
+    Discord caps modals at 5 fields and images need room of their own."""
 
     embed_title = discord.ui.TextInput(
         label="Title",
@@ -142,13 +139,6 @@ class EmbedCreationModal(discord.ui.Modal, title="Create Welcome Container"):
         required=False,
     )
 
-    embed_images = discord.ui.TextInput(
-        label="Images (Thumbnail, then Main Image)",
-        placeholder="https://example.com/thumbnail.png\nhttps://example.com/image.png",
-        style=discord.TextStyle.paragraph,
-        required=False,
-    )
-
     def __init__(self, bot: commands.Bot, existing_config: Optional[GuildConfig] = None):
         super().__init__(
             title="Edit Welcome Container" if existing_config else "Create Welcome Container"
@@ -162,11 +152,6 @@ class EmbedCreationModal(discord.ui.Modal, title="Create Welcome Container"):
                 f"#{existing_config.embed_color:06X}" if existing_config.embed_color else None
             )
             self.embed_footer.default = existing_config.embed_footer
-            self.embed_images.default = "\n".join(
-                url
-                for url in (existing_config.embed_thumbnail, existing_config.embed_image)
-                if url
-            ) or None
 
     async def on_submit(self, interaction: discord.Interaction):
         """Handle modal submission"""
@@ -197,28 +182,11 @@ class EmbedCreationModal(discord.ui.Modal, title="Create Welcome Container"):
                     )
                     return
 
-            # First non-empty line is the thumbnail, second is the main image.
-            image_lines = [line.strip() for line in self.embed_images.value.splitlines() if line.strip()]
-            thumbnail_url = image_lines[0] if len(image_lines) > 0 else None
-            main_image_url = image_lines[1] if len(image_lines) > 1 else None
-
-            for label, url in (("Thumbnail", thumbnail_url), ("Main Image", main_image_url)):
-                if url and not is_valid_url(url):
-                    await interaction.followup.send(
-                        view=QuickLayouts.error(
-                            f"Invalid {label} URL", "URLs must start with http:// or https://"
-                        ),
-                        ephemeral=True,
-                    )
-                    return
-
             config.embed_enabled = True
             config.embed_title = self.embed_title.value or None
             config.embed_description = self.embed_description.value or None
             config.embed_color = embed_color or DEFAULT_EMBED_COLOR
             config.embed_footer = self.embed_footer.value or None
-            config.embed_thumbnail = thumbnail_url or config.embed_thumbnail
-            config.embed_image = main_image_url or config.embed_image
 
             await self.bot.db.upsert_guild_config(guild_id, config.to_dict())
             self.bot.guild_configs[guild_id] = config
@@ -228,8 +196,9 @@ class EmbedCreationModal(discord.ui.Modal, title="Create Welcome Container"):
                     "Welcome Container Saved",
                     "Your welcome container has been configured successfully!\n\n"
                     "**Placeholders:** `{user}` `{username}` `{server}` `{member_count}` `{roles}`\n\n"
+                    "Use `/threadly setimages` to upload a thumbnail and/or image."
                     + (
-                        "Use `/threadly setroles` to choose which roles `{roles}` mentions."
+                        " Use `/threadly setroles` to choose which roles `{roles}` mentions."
                         if not config.mention_role_ids
                         else ""
                     ),
@@ -253,6 +222,144 @@ class EmbedCreationModal(discord.ui.Modal, title="Create Welcome Container"):
                 view=QuickLayouts.error("Something Went Wrong", str(e)),
                 ephemeral=True,
             )
+
+
+async def get_or_create_asset_channel(
+    bot: commands.Bot, guild: discord.Guild, config: GuildConfig
+) -> discord.TextChannel:
+    """
+    Get (or create) the hidden channel used to permanently host uploaded
+    thumbnail/image files. A modal file upload's own URL is signed and
+    expires, so uploads get re-sent as a message in this channel and we
+    keep that message's attachment URL instead, which stays valid for as
+    long as the message exists.
+
+    Raises discord.Forbidden if the bot lacks Manage Channels to create it.
+    """
+    if config.asset_channel_id:
+        channel = guild.get_channel(int(config.asset_channel_id))
+        if isinstance(channel, discord.TextChannel):
+            return channel
+
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=False),
+        guild.me: discord.PermissionOverwrite(
+            view_channel=True, send_messages=True, attach_files=True
+        ),
+    }
+    channel = await guild.create_text_channel(
+        name="threadly-assets",
+        overwrites=overwrites,
+        reason="Storage for Threadly welcome container images",
+        topic="Used by Threadly to permanently host welcome container images. Don't delete.",
+    )
+
+    config.asset_channel_id = str(channel.id)
+    await bot.db.upsert_guild_config(guild.id, config.to_dict())
+    bot.guild_configs[guild.id] = config
+
+    logger.info(f"Created asset storage channel {channel.id} in guild {guild.id}")
+    return channel
+
+
+class ImageUploadModal(discord.ui.Modal, title="Set Container Images"):
+    """Modal for uploading the welcome container's thumbnail and image.
+    Uses discord.ui.FileUpload instead of URL text fields so images are
+    uploaded directly rather than pasted as links."""
+
+    thumbnail_label = discord.ui.Label(
+        text="Thumbnail (blank = keep existing)",
+        description="Upload a replacement thumbnail. Hosted permanently.",
+        component=discord.ui.FileUpload(required=False, min_values=0, max_values=1),
+    )
+
+    image_label = discord.ui.Label(
+        text="Image (blank = keep existing)",
+        description="Upload a replacement image. Hosted permanently.",
+        component=discord.ui.FileUpload(required=False, min_values=0, max_values=1),
+    )
+
+    def __init__(self, bot: commands.Bot):
+        super().__init__()
+        self.bot = bot
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            await interaction.response.defer(ephemeral=True)
+
+            guild_id = interaction.guild.id
+            config_data = await self.bot.db.get_guild_config(guild_id)
+            config = (
+                GuildConfig.from_dict(config_data)
+                if config_data
+                else GuildConfig(guild_id=str(guild_id))
+            )
+
+            thumbnail_attachments = self.thumbnail_label.component.values
+            image_attachments = self.image_label.component.values
+
+            if not thumbnail_attachments and not image_attachments:
+                await interaction.followup.send(
+                    view=QuickLayouts.warning(
+                        "Nothing Uploaded",
+                        "Both fields were left blank, so nothing changed.",
+                    ),
+                    ephemeral=True,
+                )
+                return
+
+            try:
+                storage_channel = await get_or_create_asset_channel(
+                    self.bot, interaction.guild, config
+                )
+            except discord.Forbidden:
+                await interaction.followup.send(
+                    view=QuickLayouts.error(
+                        "Missing Permission",
+                        "I need the **Manage Channels** permission to create a private "
+                        "channel to permanently host uploaded images.",
+                    ),
+                    ephemeral=True,
+                )
+                return
+
+            if thumbnail_attachments:
+                config.embed_thumbnail = await self._store_attachment(
+                    storage_channel, thumbnail_attachments[0]
+                )
+            if image_attachments:
+                config.embed_image = await self._store_attachment(
+                    storage_channel, image_attachments[0]
+                )
+
+            await self.bot.db.upsert_guild_config(guild_id, config.to_dict())
+            self.bot.guild_configs[guild_id] = config
+
+            await interaction.followup.send(
+                view=QuickLayouts.success(
+                    "Images Updated", "Container images updated successfully!"
+                ),
+                ephemeral=True,
+            )
+            await interaction.followup.send(
+                view=build_preview_layout(config, interaction.user),
+                ephemeral=True,
+            )
+            logger.info(f"Container images updated in guild {guild_id} by {interaction.user.id}")
+
+        except Exception as e:
+            logger.error(f"Error in image upload modal submission: {e}")
+            await interaction.followup.send(
+                view=QuickLayouts.error("Something Went Wrong", str(e)),
+                ephemeral=True,
+            )
+
+    @staticmethod
+    async def _store_attachment(channel: discord.TextChannel, attachment: discord.Attachment) -> str:
+        """Re-upload an attachment into the storage channel and return its permanent URL."""
+        file = await attachment.to_file()
+        message = await channel.send(file=file)
+        return message.attachments[0].url
 
 
 class RoleMentionView(discord.ui.View):
@@ -327,6 +434,13 @@ class Embed(commands.Cog):
         existing_config = GuildConfig.from_dict(config_data) if config_data else None
 
         modal = EmbedCreationModal(self.bot, existing_config=existing_config)
+        await interaction.response.send_modal(modal)
+
+    @app_commands.default_permissions(administrator=True)
+    @is_bot_enabled()
+    async def set_images(self, interaction: discord.Interaction):
+        """Upload the welcome container's thumbnail and/or image"""
+        modal = ImageUploadModal(self.bot)
         await interaction.response.send_modal(modal)
 
     @app_commands.default_permissions(administrator=True)
@@ -470,6 +584,13 @@ async def setup(bot: commands.Bot):
             name="createembed",
             description="Create or edit the welcome container",
             callback=cog.create_embed,
+        )
+    )
+    threadly_group.add_command(
+        app_commands.Command(
+            name="setimages",
+            description="Upload the welcome container's thumbnail and/or image",
+            callback=cog.set_images,
         )
     )
     threadly_group.add_command(

@@ -26,6 +26,7 @@ class GuildConfig:
     embed_image: Optional[str] = None
     embed_footer: Optional[str] = None
     mention_role_ids: Optional[List[str]] = None  # Roles pinged via the {roles} placeholder
+    asset_channel_id: Optional[str] = None  # Hidden channel storing uploaded thumbnail/image files
 
     # Additional settings
     created_at: Optional[str] = None

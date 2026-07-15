@@ -83,7 +83,9 @@ All other commands are subcommands of the single `/threadly` slash command group
 
 ### Welcome Container Commands
 
-- `/threadly createembed` - Create or edit the welcome container: title, description, color, footer, and images, all in one form. Pre-fills with your current values if one already exists.
+- `/threadly createembed` - Create or edit the welcome container: title, description, color, and footer. Pre-fills with your current values if one already exists.
+- `/threadly setimages` - Upload a thumbnail and/or image directly (drag & drop or browse). Leave a field blank to keep what's already set.
+  - Uploaded files are re-hosted in a hidden `#threadly-assets` channel the bot creates automatically on first use (only the bot can see it) so the links don't expire like raw upload links do. Requires the **Manage Channels** permission the first time it's used.
 - `/threadly setroles` - Pick which roles the `{roles}` placeholder mentions
 - `/threadly toggleembed <true/false>` - Enable/disable the welcome container
 - `/threadly previewembed` - Preview the current welcome container
