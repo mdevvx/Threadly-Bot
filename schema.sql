@@ -26,11 +26,17 @@ CREATE TABLE IF NOT EXISTS threadly_guild_configs (
     embed_thumbnail TEXT,
     embed_image TEXT,
     embed_footer TEXT,
-    
+    mention_role_ids TEXT[], -- Roles pinged via the {roles} placeholder
+
     -- Timestamps
     created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc', NOW()),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc', NOW())
 );
+
+-- Migration: run this manually if the table already existed before the
+-- mention_role_ids column was added (CREATE TABLE IF NOT EXISTS above
+-- won't add columns to an existing table).
+-- ALTER TABLE threadly_guild_configs ADD COLUMN IF NOT EXISTS mention_role_ids TEXT[];
 
 -- Create index on guild_id for faster lookups
 CREATE INDEX IF NOT EXISTS idx_threadly_guild_configs_guild_id ON threadly_guild_configs(guild_id);

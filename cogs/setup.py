@@ -10,7 +10,8 @@ from utils.logger import logger
 from utils.check import is_bot_enabled
 from utils.layout_builder import ContainerLayout, QuickLayouts
 from models.guild_config import GuildConfig
-from config.settings import WELCOME_MODE_THREAD, WELCOME_MODE_CHANNEL
+from config.settings import WELCOME_MODE_THREAD, WELCOME_MODE_CHANNEL, DEFAULT_EMBED_COLOR
+from utils.command_group import threadly_group
 
 
 class Setup(commands.Cog):
@@ -21,9 +22,6 @@ class Setup(commands.Cog):
         self.bot = bot
         logger.info("Setup cog initialized")
 
-    @app_commands.command(
-        name="setmode", description="Set welcome mode (thread or channel)"
-    )
     @app_commands.describe(mode="Choose between thread or channel creation")
     @app_commands.default_permissions(administrator=True)
     @is_bot_enabled()
@@ -52,9 +50,9 @@ class Setup(commands.Cog):
             self.bot.guild_configs[guild_id] = config
 
             next_step = (
-                "Use `/setchannel` to set the channel where threads will be created."
+                "Use `/threadly setchannel` to set the channel where threads will be created."
                 if mode == WELCOME_MODE_THREAD
-                else "Use `/setcategory` to set the category where channels will be created."
+                else "Use `/threadly setcategory` to set the category where channels will be created."
             )
 
             await interaction.followup.send(
@@ -74,9 +72,6 @@ class Setup(commands.Cog):
                 ephemeral=True,
             )
 
-    @app_commands.command(
-        name="setchannel", description="Set channel for thread creation"
-    )
     @app_commands.describe(channel="The channel where welcome threads will be created")
     @app_commands.default_permissions(administrator=True)
     @is_bot_enabled()
@@ -121,7 +116,7 @@ class Setup(commands.Cog):
             if config.welcome_mode != WELCOME_MODE_THREAD:
                 description += (
                     f"\n\n**Note:** Current mode is **{config.welcome_mode}**. "
-                    f"Use `/setmode thread` to enable thread creation."
+                    f"Use `/threadly setmode thread` to enable thread creation."
                 )
 
             await interaction.followup.send(
@@ -141,9 +136,6 @@ class Setup(commands.Cog):
                 ephemeral=True,
             )
 
-    @app_commands.command(
-        name="setcategory", description="Set category for channel creation"
-    )
     @app_commands.describe(
         category="The category where welcome channels will be created"
     )
@@ -190,7 +182,7 @@ class Setup(commands.Cog):
             if config.welcome_mode != WELCOME_MODE_CHANNEL:
                 description += (
                     f"\n\n**Note:** Current mode is **{config.welcome_mode}**. "
-                    f"Use `/setmode channel` to enable channel creation."
+                    f"Use `/threadly setmode channel` to enable channel creation."
                 )
 
             await interaction.followup.send(
@@ -210,9 +202,6 @@ class Setup(commands.Cog):
                 ephemeral=True,
             )
 
-    @app_commands.command(
-        name="viewconfig", description="View current welcome system configuration"
-    )
     @app_commands.default_permissions(administrator=True)
     @is_bot_enabled()
     async def view_config(self, interaction: discord.Interaction):
@@ -228,7 +217,7 @@ class Setup(commands.Cog):
                     view=QuickLayouts.warning(
                         "No Configuration Found",
                         "Use the setup commands to configure the bot:\n"
-                        "`/setmode`, then `/setchannel` or `/setcategory`.",
+                        "`/threadly setmode`, then `/threadly setchannel` or `/threadly setcategory`.",
                     ),
                     ephemeral=True,
                 )
@@ -266,7 +255,7 @@ class Setup(commands.Cog):
                 heading="Current Configuration",
                 description=details,
                 footer=f"Requested by {interaction.user.name}",
-                color=discord.Color.blurple().value,
+                color=DEFAULT_EMBED_COLOR,
             )
 
             await interaction.followup.send(view=layout, ephemeral=True)
@@ -282,4 +271,34 @@ class Setup(commands.Cog):
 
 async def setup(bot: commands.Bot):
     """Setup function to add this cog to the bot"""
-    await bot.add_cog(Setup(bot))
+    cog = Setup(bot)
+    await bot.add_cog(cog)
+
+    threadly_group.add_command(
+        app_commands.Command(
+            name="setmode",
+            description="Set welcome mode (thread or channel)",
+            callback=cog.set_mode,
+        )
+    )
+    threadly_group.add_command(
+        app_commands.Command(
+            name="setchannel",
+            description="Set channel for thread creation",
+            callback=cog.set_channel,
+        )
+    )
+    threadly_group.add_command(
+        app_commands.Command(
+            name="setcategory",
+            description="Set category for channel creation",
+            callback=cog.set_category,
+        )
+    )
+    threadly_group.add_command(
+        app_commands.Command(
+            name="viewconfig",
+            description="View current welcome system configuration",
+            callback=cog.view_config,
+        )
+    )

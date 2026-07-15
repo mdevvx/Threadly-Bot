@@ -142,5 +142,5 @@ class QuickLayouts:
             heading=title,
             description=description,
             footer=footer,
-            color=discord.Color.blurple().value,
+            color=DEFAULT_EMBED_COLOR,
         )

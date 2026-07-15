@@ -4,12 +4,15 @@ A scalable Discord bot with welcome system (threads/channels)
 """
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 import asyncio
 import aiohttp
+import traceback
 from config.settings import DISCORD_TOKEN, BOT_PREFIX
 from utils.logger import logger
 from utils.database import db
+from utils.command_group import threadly_group
 
 
 class WelcomeBot(commands.Bot):
@@ -51,6 +54,21 @@ class WelcomeBot(commands.Bot):
 
         # Create aiohttp session for better connection pooling
         self.session = aiohttp.ClientSession()
+
+        # Supabase client creation is async, so it happens here rather
+        # than at import time. Must finish before cogs load since their
+        # commands call bot.db methods.
+        await self.db.initialize()
+
+        # Register the shared /threadly command group; cogs add their
+        # own subcommands to it as they load.
+        self.tree.add_command(threadly_group)
+
+        # Without this, an unhandled error in a command (e.g. send_modal
+        # failing) leaves the interaction completely unacknowledged, and
+        # Discord just shows "The application did not respond" with
+        # nothing in the console to explain why.
+        self.tree.on_error = self.on_app_command_error
 
         # Load all cogs
         await self.load_cogs()
@@ -138,6 +156,26 @@ class WelcomeBot(commands.Bot):
             return  # Ignore command not found errors
 
         logger.error(f"Command error in {ctx.command}: {error}")
+
+    async def on_app_command_error(
+        self, interaction: discord.Interaction, error: app_commands.AppCommandError
+    ):
+        """Global error handler for slash commands, so failures are visible
+        instead of leaving the interaction unacknowledged."""
+        command_name = interaction.command.qualified_name if interaction.command else "unknown"
+        logger.error(
+            f"App command error in /{command_name}: {error}\n"
+            + "".join(traceback.format_exception(type(error), error, error.__traceback__))
+        )
+
+        message = "Something went wrong running that command. Please try again."
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(message, ephemeral=True)
+            else:
+                await interaction.response.send_message(message, ephemeral=True)
+        except discord.HTTPException:
+            pass
 
     async def close(self):
         """Cleanup when bot shuts down"""

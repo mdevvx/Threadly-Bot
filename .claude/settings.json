@@ -1,7 +1,19 @@
 {
   "permissions": {
     "allow": [
-      "Read(//c/Users/Lenovo/AppData/Local/Programs/Python/Python313/Lib/site-packages/discord/app_commands/**)"
+      "Read(//c/Users/Lenovo/AppData/Local/Programs/Python/Python313/Lib/site-packages/discord/app_commands/**)",
+      "Bash(python -c \"import discord; print\\(discord.__file__\\); print\\(discord.__version__\\)\")",
+      "Read(//c/Users/Lenovo/AppData/Local/Programs/Python/Python313/Lib/site-packages/discord/ext/commands/**)",
+      "Bash(grep -n '`/createembed`\\\\|`/setembedimages`' cogs/embed.py)",
+      "Bash(grep -n '`/setmode\\\\|`/setchannel`\\\\|`/setcategory`' cogs/setup.py)",
+      "Bash(PYTHONPATH=\".\" python \"C:\\\\Users\\\\Lenovo\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--Muhammad-Nadeem-Mdev-Hunter-Bots-Theadly\\\\ebfcccd3-28e4-4c07-9307-b0745b72179d\\\\scratchpad\\\\verify_threadly.py\")",
+      "Bash(python -m py_compile bot.py cogs/admin.py cogs/setup.py cogs/embed.py cogs/status.py cogs/test.py utils/check.py utils/command_group.py utils/layout_builder.py config/settings.py)",
+      "Bash(rm -f \"C:\\\\Users\\\\Lenovo\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--Muhammad-Nadeem-Mdev-Hunter-Bots-Theadly\\\\ebfcccd3-28e4-4c07-9307-b0745b72179d\\\\scratchpad\\\\verify_threadly.py\")",
+      "Bash(python -c ' *)",
+      "Read(//c/Users/Lenovo/AppData/Local/Programs/Python/Python313/Lib/site-packages/discord/ui/**)",
+      "Bash(powershell -Command \"Get-Process python -ErrorAction SilentlyContinue | Select-Object Id, StartTime, Path\")",
+      "Bash(powershell -Command \"Get-CimInstance Win32_Process -Filter \\\\\"Name='python.exe'\\\\\" | Select-Object ProcessId, CreationDate, CommandLine | Format-List\")",
+      "Bash(PYTHONIOENCODING=utf-8 python -c ' *)"
     ]
   }
 }

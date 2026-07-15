@@ -3,7 +3,7 @@ Supabase database handler for guild configurations
 """
 
 from typing import Optional, Dict, Any
-from supabase import create_client, Client
+from supabase import create_async_client, AsyncClient
 from config.settings import SUPABASE_URL, SUPABASE_KEY
 from utils.logger import logger
 
@@ -12,19 +12,33 @@ class Database:
     """Database handler for Supabase operations"""
 
     def __init__(self):
-        """Initialize Supabase client"""
+        """Set up state; the actual client is created in initialize()"""
+        self.client: Optional[AsyncClient] = None
+
+    async def initialize(self):
+        """
+        Create the Supabase client.
+
+        Must be awaited once (e.g. from setup_hook) before any other
+        method is used. supabase-py's client creation is a coroutine,
+        so it can't happen in __init__. Using the async client here
+        instead of create_client() matters: the sync client's
+        .execute() blocks the event loop for the whole HTTP round-trip,
+        which can eat into Discord's 3-second interaction ack window
+        and cause "The application did not respond" errors.
+        """
         if not SUPABASE_URL or not SUPABASE_KEY:
             logger.warning(
                 "Supabase credentials not configured. Database features disabled."
             )
-            self.client: Optional[Client] = None
-        else:
-            try:
-                self.client: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-                logger.info("Supabase client initialized successfully")
-            except Exception as e:
-                logger.error(f"Failed to initialize Supabase client: {e}")
-                self.client = None
+            return
+
+        try:
+            self.client = await create_async_client(SUPABASE_URL, SUPABASE_KEY)
+            logger.info("Supabase client initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize Supabase client: {e}")
+            self.client = None
 
     async def get_guild_config(self, guild_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -41,7 +55,7 @@ class Database:
 
         try:
             response = (
-                self.client.table("threadly_guild_configs")
+                await self.client.table("threadly_guild_configs")
                 .select("*")
                 .eq("guild_id", str(guild_id))
                 .execute()
@@ -73,7 +87,7 @@ class Database:
         try:
             config["guild_id"] = str(guild_id)
             # Use on_conflict parameter to specify which column to use for conflict resolution
-            self.client.table("threadly_guild_configs").upsert(
+            await self.client.table("threadly_guild_configs").upsert(
                 config, on_conflict="guild_id"
             ).execute()
             logger.info(f"Updated config for guild {guild_id}")
@@ -99,7 +113,7 @@ class Database:
             return False
 
         try:
-            self.client.table("threadly_guild_configs").update({key: value}).eq(
+            await self.client.table("threadly_guild_configs").update({key: value}).eq(
                 "guild_id", str(guild_id)
             ).execute()
             logger.info(f"Updated {key} for guild {guild_id}")
@@ -123,7 +137,7 @@ class Database:
             return False
 
         try:
-            self.client.table("threadly_guild_configs").delete().eq(
+            await self.client.table("threadly_guild_configs").delete().eq(
                 "guild_id", str(guild_id)
             ).execute()
             logger.info(f"Deleted config for guild {guild_id}")
@@ -134,5 +148,5 @@ class Database:
             return False
 
 
-# Create database instance
+# Create database instance (client is created later via initialize())
 db = Database()

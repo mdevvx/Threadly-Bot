@@ -9,6 +9,9 @@ from utils.logger import logger
 from utils.layout_builder import ContainerLayout
 from models.guild_config import GuildConfig
 from config.settings import WELCOME_MODE_THREAD, WELCOME_MODE_CHANNEL
+from utils.command_group import threadly_group
+from cogs.embed import build_preview_layout
+from cogs.events import delete_thread_created_message
 
 
 class Test(commands.Cog):
@@ -19,10 +22,6 @@ class Test(commands.Cog):
         self.bot = bot
         logger.info("Test cog initialized")
 
-    @app_commands.command(
-        name="testwelcome",
-        description="Test the welcome system (creates a test thread/channel)",
-    )
     @app_commands.default_permissions(administrator=True)
     async def test_welcome(self, interaction: discord.Interaction):
         """
@@ -52,8 +51,8 @@ class Test(commands.Cog):
                 await interaction.followup.send(
                     "[X] No configuration found for this server!\n"
                     "Please configure the bot first using:\n"
-                    "- /setmode - Choose thread or channel mode\n"
-                    "- /setchannel or /setcategory - Set target location",
+                    "- /threadly setmode - Choose thread or channel mode\n"
+                    "- /threadly setchannel or /threadly setcategory - Set target location",
                     ephemeral=True,
                 )
                 return
@@ -64,7 +63,7 @@ class Test(commands.Cog):
             if not config.enabled:
                 await interaction.followup.send(
                     "[X] The bot is currently disabled in this server.\n"
-                    "Enable it using /toggle enable",
+                    "Enable it using /threadly toggle enable",
                     ephemeral=True,
                 )
                 return
@@ -73,9 +72,9 @@ class Test(commands.Cog):
             if not config.is_configured():
                 mode = config.welcome_mode
                 if mode == WELCOME_MODE_THREAD:
-                    missing = "Use /setchannel to set the target channel."
+                    missing = "Use /threadly setchannel to set the target channel."
                 else:
-                    missing = "Use /setcategory to set the target category."
+                    missing = "Use /threadly setcategory to set the target category."
 
                 await interaction.followup.send(
                     f"[X] Server is not fully configured.\n{missing}", ephemeral=True
@@ -171,6 +170,8 @@ class Test(commands.Cog):
             )
 
             logger.info(f"Created test thread {thread.id} in guild {guild.id}")
+
+            await delete_thread_created_message(channel, thread)
 
             # Send welcome message/embed
             await self._send_test_welcome_message(thread, member, config)
@@ -282,7 +283,7 @@ class Test(commands.Cog):
         """
         try:
             if config.embed_enabled and config.get_embed_dict():
-                layout = self._create_test_welcome_layout(member, config)
+                layout = build_preview_layout(config, member, author_name="[TEST MODE]")
                 logger.info(f"Sent test welcome layout to {destination.id}")
             else:
                 layout = ContainerLayout(
@@ -304,64 +305,6 @@ class Test(commands.Cog):
             logger.error(f"HTTP error sending test welcome message: {e}")
         except Exception as e:
             logger.error(f"Error sending test welcome message: {e}")
-
-    def _create_test_welcome_layout(
-        self, member: discord.Member, config: GuildConfig
-    ) -> ContainerLayout:
-        """
-        Build the test welcome container layout, tagged with a
-        [TEST MODE] marker so it's obviously distinguishable from a
-        real welcome message.
-
-        Args:
-            member: Member for testing
-            config: Guild configuration
-
-        Returns:
-            A ContainerLayout ready to be sent with `destination.send(view=...)`
-        """
-        title = self._replace_placeholders(config.embed_title or "Welcome!", member)
-        description = self._replace_placeholders(
-            config.embed_description or f"Welcome to {member.guild.name}!", member
-        )
-        footer = (
-            self._replace_placeholders(config.embed_footer, member)
-            if config.embed_footer
-            else None
-        )
-
-        return ContainerLayout(
-            author_name="[TEST MODE]",
-            heading=title,
-            description=f"{member.mention}\n\n{description}",
-            thumbnail_url=config.embed_thumbnail,
-            image_url=config.embed_image,
-            footer=footer,
-            color=config.embed_color,
-        )
-
-    def _replace_placeholders(self, text: str, member: discord.Member) -> str:
-        """
-        Replace placeholders with actual member/guild data
-
-        Args:
-            text: Text containing placeholders
-            member: Member for testing
-
-        Returns:
-            Text with replaced placeholders
-        """
-        replacements = {
-            "{user}": member.mention,
-            "{username}": member.name,
-            "{server}": member.guild.name,
-            "{member_count}": str(member.guild.member_count),
-        }
-
-        for placeholder, value in replacements.items():
-            text = text.replace(placeholder, value)
-
-        return text
 
     def _sanitize_channel_name(self, name: str) -> str:
         """
@@ -393,4 +336,13 @@ class Test(commands.Cog):
 
 async def setup(bot: commands.Bot):
     """Setup function to add this cog to the bot"""
-    await bot.add_cog(Test(bot))
+    cog = Test(bot)
+    await bot.add_cog(cog)
+
+    threadly_group.add_command(
+        app_commands.Command(
+            name="testwelcome",
+            description="Test the welcome system (creates a test thread/channel)",
+            callback=cog.test_welcome,
+        )
+    )

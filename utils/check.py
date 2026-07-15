@@ -43,7 +43,7 @@ def is_bot_enabled():
                 view=QuickLayouts.error(
                     "Bot Disabled",
                     "The bot is currently disabled in this server. "
-                    "An administrator can enable it using `/toggle enable`.",
+                    "An administrator can enable it using `/threadly toggle enable`.",
                 ),
                 ephemeral=True,
             )
@@ -81,8 +81,8 @@ def is_guild_configured():
                     "Server Not Configured",
                     "This server hasn't been configured yet. Please use the "
                     "setup commands first:\n"
-                    "`/setmode` - Choose thread or channel mode\n"
-                    "`/setchannel` or `/setcategory` - Set target location",
+                    "`/threadly setmode` - Choose thread or channel mode\n"
+                    "`/threadly setchannel` or `/threadly setcategory` - Set target location",
                 ),
                 ephemeral=True,
             )
@@ -95,9 +95,9 @@ def is_guild_configured():
         if not config.is_configured():
             mode = config.welcome_mode
             if mode == "thread":
-                missing = "Use `/setchannel` to set the target channel."
+                missing = "Use `/threadly setchannel` to set the target channel."
             else:
-                missing = "Use `/setcategory` to set the target category."
+                missing = "Use `/threadly setcategory` to set the target category."
 
             await interaction.response.send_message(
                 view=QuickLayouts.warning("Server Not Fully Configured", missing),

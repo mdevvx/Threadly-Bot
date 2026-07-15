@@ -11,16 +11,18 @@ Container now instead of an Embed.
 import discord
 from discord import app_commands
 from discord.ext import commands
+from typing import Optional
 from utils.logger import logger
 from utils.check import is_bot_enabled
 from utils.layout_builder import ContainerLayout, QuickLayouts
 from models.guild_config import GuildConfig
 from config.settings import DEFAULT_EMBED_COLOR
+from utils.command_group import threadly_group
 
 
-def replace_placeholders(text: str, user: discord.abc.User) -> str:
+def replace_placeholders(text: str, user: discord.abc.User, roles_mention: str = "") -> str:
     """
-    Replace {user}/{username}/{server}/{member_count} placeholders.
+    Replace {user}/{username}/{server}/{member_count}/{roles} placeholders.
 
     Shared by the creation modal and the preview command so the two
     can never drift out of sync with each other.
@@ -29,6 +31,7 @@ def replace_placeholders(text: str, user: discord.abc.User) -> str:
         text: Text containing placeholders
         user: User to pull mention/name data from (guild data uses
             sample values since a modal submission has no "new member")
+        roles_mention: Pre-built role mention string for {roles}
 
     Returns:
         Text with placeholders replaced
@@ -40,29 +43,56 @@ def replace_placeholders(text: str, user: discord.abc.User) -> str:
         "{member_count}": (
             str(user.guild.member_count) if getattr(user, "guild", None) else "100"
         ),
+        "{roles}": roles_mention,
     }
     for placeholder, value in replacements.items():
         text = text.replace(placeholder, str(value))
     return text
 
 
-def build_preview_layout(config: GuildConfig, user: discord.abc.User) -> ContainerLayout:
+def build_preview_layout(
+    config: GuildConfig, user: discord.abc.User, author_name: Optional[str] = None
+) -> ContainerLayout:
     """
     Build a preview ContainerLayout from guild config, using the
     invoking user as sample placeholder data.
 
+    This is the single source of truth for turning a GuildConfig into a
+    rendered container: /threadly previewembed, /threadly testwelcome,
+    and the post-submit preview after /threadly createembed all call
+    this instead of keeping their own copies, so they can't drift apart.
+
     Args:
         config: Guild configuration
         user: User to preview placeholders with
+        author_name: Optional small tag shown above the heading (e.g.
+            "[TEST MODE]" for /threadly testwelcome)
 
     Returns:
         A ContainerLayout ready to be sent with `followup.send(view=...)`
     """
-    title = replace_placeholders(config.embed_title or "Welcome!", user)
-    description = replace_placeholders(
-        config.embed_description or "Welcome to the server!", user
-    )
-    footer = replace_placeholders(config.embed_footer, user) if config.embed_footer else None
+    roles_mention = config.mention_roles_text()
+    # No fallback text: a field left blank should preview exactly as it
+    # will actually be sent, i.e. omitted, not filled with placeholder copy.
+    raw_title = config.embed_title or ""
+    raw_description = config.embed_description or ""
+    raw_footer = config.embed_footer or ""
+    combined_raw = raw_title + raw_description + raw_footer
+
+    title = replace_placeholders(raw_title, user, roles_mention) if raw_title else None
+    description = replace_placeholders(raw_description, user, roles_mention) if raw_description else ""
+    footer = replace_placeholders(raw_footer, user, roles_mention) if raw_footer else ""
+
+    # Mirrors the fallback placement rules used for the real welcome
+    # message, so the preview matches what members will actually see.
+    if "{user}" not in combined_raw:
+        description = f"{user.mention}\n\n{description}" if description else user.mention
+
+    if roles_mention and "{roles}" not in combined_raw:
+        footer = f"{footer}  {roles_mention}" if footer else roles_mention
+
+    description = description or None
+    footer = footer or None
 
     return ContainerLayout(
         heading=title,
@@ -71,6 +101,7 @@ def build_preview_layout(config: GuildConfig, user: discord.abc.User) -> Contain
         image_url=config.embed_image,
         footer=footer,
         color=config.embed_color or DEFAULT_EMBED_COLOR,
+        author_name=author_name,
     )
 
 
@@ -80,7 +111,7 @@ def is_valid_url(url: str) -> bool:
 
 
 class EmbedCreationModal(discord.ui.Modal, title="Create Welcome Container"):
-    """Modal for creating the welcome container's text content."""
+    """Modal for creating the welcome container, text and images together."""
 
     embed_title = discord.ui.TextInput(
         label="Title",
@@ -93,7 +124,7 @@ class EmbedCreationModal(discord.ui.Modal, title="Create Welcome Container"):
         label="Description",
         placeholder="Use {user}, {username}, {server}, {member_count}",
         style=discord.TextStyle.paragraph,
-        max_length=4096,
+        max_length=4000,  # Discord's modal TextInput cap (embed descriptions allow 4096, modals don't)
         required=False,
     )
 
@@ -111,9 +142,31 @@ class EmbedCreationModal(discord.ui.Modal, title="Create Welcome Container"):
         required=False,
     )
 
-    def __init__(self, bot: commands.Bot):
-        super().__init__()
+    embed_images = discord.ui.TextInput(
+        label="Images (Thumbnail, then Main Image)",
+        placeholder="https://example.com/thumbnail.png\nhttps://example.com/image.png",
+        style=discord.TextStyle.paragraph,
+        required=False,
+    )
+
+    def __init__(self, bot: commands.Bot, existing_config: Optional[GuildConfig] = None):
+        super().__init__(
+            title="Edit Welcome Container" if existing_config else "Create Welcome Container"
+        )
         self.bot = bot
+
+        if existing_config:
+            self.embed_title.default = existing_config.embed_title
+            self.embed_description.default = existing_config.embed_description
+            self.embed_color.default = (
+                f"#{existing_config.embed_color:06X}" if existing_config.embed_color else None
+            )
+            self.embed_footer.default = existing_config.embed_footer
+            self.embed_images.default = "\n".join(
+                url
+                for url in (existing_config.embed_thumbnail, existing_config.embed_image)
+                if url
+            ) or None
 
     async def on_submit(self, interaction: discord.Interaction):
         """Handle modal submission"""
@@ -144,22 +197,43 @@ class EmbedCreationModal(discord.ui.Modal, title="Create Welcome Container"):
                     )
                     return
 
+            # First non-empty line is the thumbnail, second is the main image.
+            image_lines = [line.strip() for line in self.embed_images.value.splitlines() if line.strip()]
+            thumbnail_url = image_lines[0] if len(image_lines) > 0 else None
+            main_image_url = image_lines[1] if len(image_lines) > 1 else None
+
+            for label, url in (("Thumbnail", thumbnail_url), ("Main Image", main_image_url)):
+                if url and not is_valid_url(url):
+                    await interaction.followup.send(
+                        view=QuickLayouts.error(
+                            f"Invalid {label} URL", "URLs must start with http:// or https://"
+                        ),
+                        ephemeral=True,
+                    )
+                    return
+
             config.embed_enabled = True
             config.embed_title = self.embed_title.value or None
             config.embed_description = self.embed_description.value or None
             config.embed_color = embed_color or DEFAULT_EMBED_COLOR
             config.embed_footer = self.embed_footer.value or None
+            config.embed_thumbnail = thumbnail_url or config.embed_thumbnail
+            config.embed_image = main_image_url or config.embed_image
 
             await self.bot.db.upsert_guild_config(guild_id, config.to_dict())
             self.bot.guild_configs[guild_id] = config
 
             await interaction.followup.send(
                 view=QuickLayouts.success(
-                    "Welcome Container Created",
+                    "Welcome Container Saved",
                     "Your welcome container has been configured successfully!\n\n"
-                    "**Placeholders:** `{user}` `{username}` `{server}` `{member_count}`\n\n"
-                    "Use `/setembedimages` to add a thumbnail and image.",
-                    footer=f"Created by {interaction.user.name}",
+                    "**Placeholders:** `{user}` `{username}` `{server}` `{member_count}` `{roles}`\n\n"
+                    + (
+                        "Use `/threadly setroles` to choose which roles `{roles}` mentions."
+                        if not config.mention_role_ids
+                        else ""
+                    ),
+                    footer=f"Saved by {interaction.user.name}",
                 ),
                 ephemeral=True,
             )
@@ -181,84 +255,56 @@ class EmbedCreationModal(discord.ui.Modal, title="Create Welcome Container"):
             )
 
 
-class ImageURLModal(discord.ui.Modal, title="Set Container Images"):
-    """Modal for setting the welcome container's thumbnail and image URLs."""
+class RoleMentionView(discord.ui.View):
+    """Role picker for the welcome container's {roles} placeholder."""
 
-    thumbnail_url = discord.ui.TextInput(
-        label="Thumbnail URL",
-        placeholder="https://example.com/thumbnail.png",
-        required=False,
-    )
-
-    image_url = discord.ui.TextInput(
-        label="Main Image URL",
-        placeholder="https://example.com/image.png",
-        required=False,
-    )
-
-    def __init__(self, bot: commands.Bot):
-        super().__init__()
+    def __init__(self, bot: commands.Bot, existing_role_ids: Optional[list] = None):
+        super().__init__(timeout=180)
         self.bot = bot
 
-    async def on_submit(self, interaction: discord.Interaction):
-        """Handle modal submission"""
+        select = discord.ui.RoleSelect(
+            placeholder="Select roles to mention (e.g. Team roles)",
+            min_values=0,
+            max_values=10,
+            default_values=[discord.Object(id=int(rid)) for rid in (existing_role_ids or [])],
+        )
+        select.callback = self.on_select
+        self.add_item(select)
+
+    async def on_select(self, interaction: discord.Interaction):
         try:
-            await interaction.response.defer(ephemeral=True)
+            select: discord.ui.RoleSelect = self.children[0]
+            role_ids = [str(role.id) for role in select.values]
 
             guild_id = interaction.guild.id
             config_data = await self.bot.db.get_guild_config(guild_id)
-
-            if not config_data:
-                await interaction.followup.send(
-                    view=QuickLayouts.error(
-                        "No Configuration Found",
-                        "Use `/createembed` first to set up a welcome container.",
-                    ),
-                    ephemeral=True,
-                )
-                return
-
-            config = GuildConfig.from_dict(config_data)
-
-            if self.thumbnail_url.value and not is_valid_url(self.thumbnail_url.value):
-                await interaction.followup.send(
-                    view=QuickLayouts.error(
-                        "Invalid Thumbnail URL", "URLs must start with http:// or https://"
-                    ),
-                    ephemeral=True,
-                )
-                return
-
-            if self.image_url.value and not is_valid_url(self.image_url.value):
-                await interaction.followup.send(
-                    view=QuickLayouts.error(
-                        "Invalid Image URL", "URLs must start with http:// or https://"
-                    ),
-                    ephemeral=True,
-                )
-                return
-
-            if self.thumbnail_url.value:
-                config.embed_thumbnail = self.thumbnail_url.value
-            if self.image_url.value:
-                config.embed_image = self.image_url.value
+            config = (
+                GuildConfig.from_dict(config_data)
+                if config_data
+                else GuildConfig(guild_id=str(guild_id))
+            )
+            config.mention_role_ids = role_ids or None
 
             await self.bot.db.upsert_guild_config(guild_id, config.to_dict())
             self.bot.guild_configs[guild_id] = config
 
-            await interaction.followup.send(
+            mention_text = config.mention_roles_text() or "*(none selected)*"
+            await interaction.response.send_message(
                 view=QuickLayouts.success(
-                    "Images Updated", "Container images updated successfully!"
+                    "Mention Roles Updated",
+                    f"`{{roles}}` will now mention: {mention_text}\n\n"
+                    "They'll be auto-added to the footer of your welcome container. "
+                    "To place them somewhere else instead (title, description, or a "
+                    "custom spot in the footer), add `{roles}` there yourself with "
+                    "`/threadly createembed`.",
                 ),
                 ephemeral=True,
             )
-            logger.info(
-                f"Container images updated in guild {guild_id} by {interaction.user.id}"
-            )
+            logger.info(f"Mention roles updated in guild {guild_id} by {interaction.user.id}")
 
         except Exception as e:
-            logger.error(f"Error in image URL modal submission: {e}")
-            await interaction.followup.send(
+            logger.error(f"Error in role mention select: {e}")
+            await interaction.response.send_message(
                 view=QuickLayouts.error("Something Went Wrong", str(e)),
                 ephemeral=True,
             )
@@ -272,30 +318,33 @@ class Embed(commands.Cog):
         self.bot = bot
         logger.info("Embed cog initialized")
 
-    @app_commands.command(
-        name="createembed", description="Create a custom welcome container"
-    )
     @app_commands.default_permissions(administrator=True)
     @is_bot_enabled()
     async def create_embed(self, interaction: discord.Interaction):
-        """Create and configure a welcome container using a modal form"""
-        modal = EmbedCreationModal(self.bot)
+        """Create or edit the welcome container using a modal form"""
+        guild_id = interaction.guild.id
+        config_data = await self.bot.db.get_guild_config(guild_id)
+        existing_config = GuildConfig.from_dict(config_data) if config_data else None
+
+        modal = EmbedCreationModal(self.bot, existing_config=existing_config)
         await interaction.response.send_modal(modal)
 
-    @app_commands.command(
-        name="setembedimages",
-        description="Set thumbnail and image URLs for the welcome container",
-    )
     @app_commands.default_permissions(administrator=True)
     @is_bot_enabled()
-    async def set_embed_images(self, interaction: discord.Interaction):
-        """Set thumbnail and image URLs for the welcome container using a modal"""
-        modal = ImageURLModal(self.bot)
-        await interaction.response.send_modal(modal)
+    async def set_mention_roles(self, interaction: discord.Interaction):
+        """Choose which roles the {roles} placeholder mentions"""
+        guild_id = interaction.guild.id
+        config_data = await self.bot.db.get_guild_config(guild_id)
+        existing_role_ids = (
+            GuildConfig.from_dict(config_data).mention_role_ids if config_data else None
+        )
 
-    @app_commands.command(
-        name="toggleembed", description="Enable or disable the welcome container"
-    )
+        await interaction.response.send_message(
+            content="Select up to 10 roles to mention with the `{roles}` placeholder:",
+            view=RoleMentionView(self.bot, existing_role_ids),
+            ephemeral=True,
+        )
+
     @app_commands.describe(state="Enable or disable the welcome container")
     @app_commands.default_permissions(administrator=True)
     @is_bot_enabled()
@@ -316,7 +365,7 @@ class Embed(commands.Cog):
                 await interaction.followup.send(
                     view=QuickLayouts.error(
                         "No Configuration Found",
-                        "Use `/createembed` first to set up a welcome container.",
+                        "Use `/threadly createembed` first to set up a welcome container.",
                     ),
                     ephemeral=True,
                 )
@@ -328,7 +377,7 @@ class Embed(commands.Cog):
                 await interaction.followup.send(
                     view=QuickLayouts.error(
                         "No Container Configured",
-                        "Use `/createembed` to create one first.",
+                        "Use `/threadly createembed` to create one first.",
                     ),
                     ephemeral=True,
                 )
@@ -357,9 +406,6 @@ class Embed(commands.Cog):
                 ephemeral=True,
             )
 
-    @app_commands.command(
-        name="previewembed", description="Preview the current welcome container"
-    )
     @app_commands.default_permissions(administrator=True)
     @is_bot_enabled()
     async def preview_embed(self, interaction: discord.Interaction):
@@ -374,7 +420,7 @@ class Embed(commands.Cog):
                 await interaction.followup.send(
                     view=QuickLayouts.error(
                         "No Configuration Found",
-                        "Use `/createembed` first to set up a welcome container.",
+                        "Use `/threadly createembed` first to set up a welcome container.",
                     ),
                     ephemeral=True,
                 )
@@ -382,18 +428,24 @@ class Embed(commands.Cog):
 
             config = GuildConfig.from_dict(config_data)
 
-            if not config.embed_enabled or not config.get_embed_dict():
+            if not config.get_embed_dict():
                 await interaction.followup.send(
                     view=QuickLayouts.error(
                         "No Container Configured",
-                        "Use `/createembed` to create one.",
+                        "Use `/threadly createembed` to create one.",
                     ),
                     ephemeral=True,
                 )
                 return
 
+            # Preview shows the saved content regardless of enabled/disabled
+            # state, since toggling it off doesn't erase anything and admins
+            # should still be able to check it before re-enabling. The tag
+            # goes inside the container (not `content=`) since Components V2
+            # layouts can't be combined with a message content field.
+            tag = None if config.embed_enabled else "[DISABLED]"
             await interaction.followup.send(
-                view=build_preview_layout(config, interaction.user),
+                view=build_preview_layout(config, interaction.user, author_name=tag),
                 ephemeral=True,
             )
             logger.info(
@@ -410,4 +462,34 @@ class Embed(commands.Cog):
 
 async def setup(bot: commands.Bot):
     """Setup function to add this cog to the bot"""
-    await bot.add_cog(Embed(bot))
+    cog = Embed(bot)
+    await bot.add_cog(cog)
+
+    threadly_group.add_command(
+        app_commands.Command(
+            name="createembed",
+            description="Create or edit the welcome container",
+            callback=cog.create_embed,
+        )
+    )
+    threadly_group.add_command(
+        app_commands.Command(
+            name="setroles",
+            description="Choose which roles the {roles} placeholder mentions",
+            callback=cog.set_mention_roles,
+        )
+    )
+    threadly_group.add_command(
+        app_commands.Command(
+            name="toggleembed",
+            description="Enable or disable the welcome container",
+            callback=cog.toggle_embed,
+        )
+    )
+    threadly_group.add_command(
+        app_commands.Command(
+            name="previewembed",
+            description="Preview the current welcome container",
+            callback=cog.preview_embed,
+        )
+    )

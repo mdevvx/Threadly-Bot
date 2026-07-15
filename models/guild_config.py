@@ -2,7 +2,7 @@
 Guild configuration model
 """
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, field, asdict
 from config.settings import WELCOME_MODE_THREAD
 
@@ -25,6 +25,7 @@ class GuildConfig:
     embed_thumbnail: Optional[str] = None
     embed_image: Optional[str] = None
     embed_footer: Optional[str] = None
+    mention_role_ids: Optional[List[str]] = None  # Roles pinged via the {roles} placeholder
 
     # Additional settings
     created_at: Optional[str] = None
@@ -45,6 +46,12 @@ class GuildConfig:
             return self.target_channel_id is not None
         else:  # channel mode
             return self.target_category_id is not None
+
+    def mention_roles_text(self) -> str:
+        """Space-separated role mentions for the {roles} placeholder."""
+        if not self.mention_role_ids:
+            return ""
+        return " ".join(f"<@&{role_id}>" for role_id in self.mention_role_ids)
 
     def get_embed_dict(self) -> Optional[Dict[str, Any]]:
         """Get embed configuration as dictionary"""

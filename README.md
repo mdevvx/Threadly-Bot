@@ -11,7 +11,7 @@ A scalable Discord bot that creates personalized welcome threads or channels for
 - **Database-Backed**: Supabase integration for persistent storage
 - **Comprehensive Logging**: Colored console output plus daily log files
 - **Slash Commands**: Modern Discord slash command interface, synced instantly per-guild
-- **Built-in Testing**: `/testwelcome` lets admins verify their setup without waiting for a real member to join
+- **Built-in Testing**: `/threadly testwelcome` lets admins verify their setup without waiting for a real member to join
 
 ## Prerequisites
 
@@ -70,38 +70,43 @@ A scalable Discord bot that creates personalized welcome threads or channels for
 
 - `$sync` - Sync slash commands to the current server (bot owner only)
 - `$sync clear` - Remove all commands from the current server (bot owner only)
-- `/toggle <enable/disable>` - Enable/disable the bot in this server
+- `/threadly toggle <enable/disable>` - Enable/disable the bot in this server
+
+All other commands are subcommands of the single `/threadly` slash command group.
 
 ### Setup Commands
 
-- `/setmode <thread/channel>` - Set welcome mode
-- `/setchannel <channel>` - Set channel for threads
-- `/setcategory <category>` - Set category for channels
-- `/viewconfig` - View current configuration
+- `/threadly setmode <thread/channel>` - Set welcome mode
+- `/threadly setchannel <channel>` - Set channel for threads
+- `/threadly setcategory <category>` - Set category for channels
+- `/threadly viewconfig` - View current configuration
 
 ### Welcome Container Commands
 
-- `/createembed` - Create a custom welcome container (opens a form)
-- `/setembedimages` - Set thumbnail and image URLs for the welcome container
-- `/toggleembed <true/false>` - Enable/disable the welcome container
-- `/previewembed` - Preview the current welcome container
+- `/threadly createembed` - Create or edit the welcome container: title, description, color, footer, and images, all in one form. Pre-fills with your current values if one already exists.
+- `/threadly setroles` - Pick which roles the `{roles}` placeholder mentions
+- `/threadly toggleembed <true/false>` - Enable/disable the welcome container
+- `/threadly previewembed` - Preview the current welcome container
 
 ### Testing
 
-- `/testwelcome` - Simulate a member join to test your setup without waiting for a real one
+- `/threadly testwelcome` - Simulate a member join to test your setup without waiting for a real one
 
 ### Status
 
-- `/status` - View bot status and statistics
+- `/threadly status` - View bot status and statistics
 
 ## Welcome Container Placeholders
 
 Use these in your welcome container's title/description/footer:
 
-- `{user}` - Mentions the new member
+- `{user}` - Mentions the new member (if omitted from the template entirely, it's still added to the description so joins keep pinging)
 - `{username}` - Member's username
 - `{server}` - Server name
 - `{member_count}` - Total member count
+- `{roles}` - Mentions the roles picked with `/threadly setroles`
+
+Place `{user}` or `{roles}` wherever fits your design, e.g. a quiet `-# Say hi, {user}!` in the footer instead of a mention up top.
 
 ## Folder Structure
 
@@ -112,16 +117,17 @@ discord_bot/
 ├── requirements.txt    # Dependencies
 ├── schema.sql          # Supabase table schema
 ├── cogs/                # Command modules
-│   ├── admin.py          # $sync, /toggle
-│   ├── setup.py          # /setmode, /setchannel, /setcategory, /viewconfig
-│   ├── embed.py          # Welcome container commands
-│   ├── status.py         # /status
+│   ├── admin.py          # $sync, /threadly toggle
+│   ├── setup.py          # /threadly setmode, setchannel, setcategory, viewconfig
+│   ├── embed.py          # /threadly welcome container commands
+│   ├── status.py         # /threadly status
 │   ├── events.py         # on_member_join and welcome delivery
-│   └── test.py           # /testwelcome
+│   └── test.py           # /threadly testwelcome
 ├── utils/               # Utility modules
 │   ├── logger.py          # Colored console + file logging
 │   ├── database.py        # Supabase wrapper
 │   ├── layout_builder.py  # Components V2 container helpers
+│   ├── command_group.py   # Shared /threadly app_commands.Group
 │   └── check.py           # Reusable app_commands checks
 ├── models/              # Data models
 │   └── guild_config.py    # Per-guild config dataclass
@@ -139,6 +145,7 @@ The bot needs these permissions:
 - **Send Messages**
 - **Create Public Threads** (for thread mode)
 - **Manage Channels** (for channel mode)
+- **Manage Messages** (to hide the "started a thread" system message; skipped gracefully if missing)
 - **Embed Links**
 - **Attach Files**
 

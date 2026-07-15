@@ -10,6 +10,31 @@ from models.guild_config import GuildConfig
 from config.settings import WELCOME_MODE_THREAD, WELCOME_MODE_CHANNEL
 
 
+async def delete_thread_created_message(channel: discord.TextChannel, thread: discord.Thread):
+    """
+    Delete Discord's auto-generated "X started a thread: Y" system
+    message from the parent channel. Threads created without a starter
+    message get one of these automatically; shared by the real welcome
+    flow and /threadly testwelcome so both stay clutter-free the same
+    way. Requires Manage Messages; if the bot doesn't have it, this is
+    skipped rather than failing the caller.
+    """
+    if not channel.permissions_for(channel.guild.me).manage_messages:
+        logger.debug(
+            f"Missing Manage Messages in channel {channel.id}; "
+            "can't hide the 'started a thread' system message."
+        )
+        return
+
+    try:
+        async for msg in channel.history(limit=5):
+            if msg.type == discord.MessageType.thread_created and msg.content == thread.name:
+                await msg.delete()
+                break
+    except discord.HTTPException as e:
+        logger.debug(f"Could not delete thread-created system message: {e}")
+
+
 class Events(commands.Cog):
     """Event handlers for the bot"""
 
@@ -110,6 +135,11 @@ class Events(commands.Cog):
                 f"Created thread {thread.id} for member {member.id} in guild {guild.id}"
             )
 
+            # Threads created without a starter message get an automatic
+            # "X started a thread: Y" system message in the parent channel;
+            # clean it up so the channel doesn't fill up with one line per join.
+            await delete_thread_created_message(channel, thread)
+
             # Send welcome message/embed
             await self._send_welcome_message(thread, member, config)
 
@@ -183,8 +213,9 @@ class Events(commands.Cog):
         """
         Send the welcome message to the destination as a Components V2
         layout. Note that Components V2 messages can't mix a `content`
-        field with components, so the member mention lives inside the
-        container's text instead (mentions still ping from there).
+        field with components, so the member/role mentions live inside
+        the container's text instead (mentions still ping from there,
+        as long as allowed_mentions permits it).
 
         Args:
             destination: Channel or thread to send message to
@@ -208,7 +239,10 @@ class Events(commands.Cog):
                     f"Sent welcome message to {destination.id} for member {member.id}"
                 )
 
-            await destination.send(view=layout)
+            await destination.send(
+                view=layout,
+                allowed_mentions=discord.AllowedMentions(users=True, roles=True),
+            )
 
         except discord.Forbidden:
             logger.error(f"Forbidden: Cannot send message to {destination.id}")
@@ -223,6 +257,14 @@ class Events(commands.Cog):
         """
         Build the welcome container layout from guild config.
 
+        The {user}/{roles} placeholders can be placed anywhere the admin
+        wants (title, description, or footer, e.g. a quieter mention in
+        the footer instead of the top of the description). If the
+        template doesn't use {user} anywhere, it's appended to the
+        description as a fallback so joins still get pinged. Likewise,
+        if roles are configured via /threadly setroles but {roles}
+        isn't used anywhere, it's appended to the footer.
+
         Args:
             member: The member who joined
             config: Guild configuration
@@ -230,33 +272,45 @@ class Events(commands.Cog):
         Returns:
             A ContainerLayout ready to be sent with `destination.send(view=...)`
         """
-        title = self._replace_placeholders(config.embed_title or "Welcome!", member)
-        description = self._replace_placeholders(
-            config.embed_description or f"Welcome to {member.guild.name}!", member
-        )
-        footer = (
-            self._replace_placeholders(config.embed_footer, member)
-            if config.embed_footer
-            else None
-        )
+        # No fallback text here: by the time this runs the admin has
+        # already configured and enabled the container, so a field left
+        # blank is a deliberate choice to omit it, not a first-time default.
+        raw_title = config.embed_title or ""
+        raw_description = config.embed_description or ""
+        raw_footer = config.embed_footer or ""
+
+        title = self._replace_placeholders(raw_title, member, config)
+        description = self._replace_placeholders(raw_description, member, config)
+        footer = self._replace_placeholders(raw_footer, member, config) if raw_footer else None
+
+        combined_raw = raw_title + raw_description + raw_footer
+
+        if "{user}" not in combined_raw:
+            description = f"{member.mention}\n\n{description}"
+
+        roles_mention = config.mention_roles_text()
+        if roles_mention and "{roles}" not in combined_raw:
+            footer = f"{footer}  {roles_mention}" if footer else roles_mention
 
         return ContainerLayout(
             heading=title,
-            # Mention goes first so the join notification still pings the member.
-            description=f"{member.mention}\n\n{description}",
+            description=description,
             thumbnail_url=config.embed_thumbnail,
             image_url=config.embed_image,
             footer=footer,
             color=config.embed_color,
         )
 
-    def _replace_placeholders(self, text: str, member: discord.Member) -> str:
+    def _replace_placeholders(
+        self, text: str, member: discord.Member, config: GuildConfig
+    ) -> str:
         """
-        Replace placeholders with actual member/guild data
+        Replace placeholders with actual member/guild/role data
 
         Args:
             text: Text containing placeholders
             member: Member who joined
+            config: Guild configuration (for {roles})
 
         Returns:
             Text with replaced placeholders
@@ -266,6 +320,7 @@ class Events(commands.Cog):
             "{username}": member.name,
             "{server}": member.guild.name,
             "{member_count}": str(member.guild.member_count),
+            "{roles}": config.mention_roles_text(),
         }
 
         for placeholder, value in replacements.items():

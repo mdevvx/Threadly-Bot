@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from utils.logger import logger
 from utils.layout_builder import ContainerLayout
 from models.guild_config import GuildConfig
+from config.settings import DEFAULT_EMBED_COLOR
+from utils.command_group import threadly_group
 
 
 class Status(commands.Cog):
@@ -22,9 +24,6 @@ class Status(commands.Cog):
         self.start_time = datetime.now(timezone.utc)
         logger.info("Status cog initialized")
 
-    @app_commands.command(
-        name="status", description="Display bot status and information"
-    )
     async def status(self, interaction: discord.Interaction):
         """
         Show comprehensive bot status including:
@@ -92,7 +91,7 @@ class Status(commands.Cog):
                 thumbnail_url=self.bot.user.display_avatar.url,
                 extra_text=stat_blocks,
                 footer=f"Requested by {interaction.user.name}",
-                color=discord.Color.blurple().value,
+                color=DEFAULT_EMBED_COLOR,
             )
 
             await interaction.followup.send(view=layout)
@@ -110,4 +109,13 @@ class Status(commands.Cog):
 
 async def setup(bot: commands.Bot):
     """Setup function to add this cog to the bot"""
-    await bot.add_cog(Status(bot))
+    cog = Status(bot)
+    await bot.add_cog(cog)
+
+    threadly_group.add_command(
+        app_commands.Command(
+            name="status",
+            description="Display bot status and information",
+            callback=cog.status,
+        )
+    )

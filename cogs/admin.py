@@ -9,6 +9,7 @@ from typing import Literal, Optional
 from utils.logger import logger
 from utils.layout_builder import QuickLayouts
 from models.guild_config import GuildConfig
+from utils.command_group import threadly_group
 
 
 class Admin(commands.Cog):
@@ -69,9 +70,6 @@ class Admin(commands.Cog):
             await ctx.send(f"❌ Failed to sync commands: {str(e)}")
             logger.error(f"Error syncing commands: {e}")
 
-    @app_commands.command(
-        name="toggle", description="Enable or disable the bot in this server"
-    )
     @app_commands.describe(state="Enable or disable the bot")
     @app_commands.default_permissions(administrator=True)
     async def toggle_bot(
@@ -145,4 +143,13 @@ class Admin(commands.Cog):
 
 async def setup(bot: commands.Bot):
     """Setup function to add this cog to the bot"""
-    await bot.add_cog(Admin(bot))
+    cog = Admin(bot)
+    await bot.add_cog(cog)
+
+    threadly_group.add_command(
+        app_commands.Command(
+            name="toggle",
+            description="Enable or disable the bot in this server",
+            callback=cog.toggle_bot,
+        )
+    )
