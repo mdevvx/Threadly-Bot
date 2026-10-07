@@ -8,6 +8,7 @@ from discord import app_commands
 from typing import Callable
 from utils.logger import logger
 from utils.layout_builder import QuickLayouts
+from utils.database import DatabaseError
 
 
 def is_bot_enabled():
@@ -29,7 +30,14 @@ def is_bot_enabled():
         bot = interaction.client
 
         # Get guild config
-        config_data = await bot.db.get_guild_config(interaction.guild.id)
+        try:
+            config_data = await bot.db.get_guild_config(interaction.guild.id)
+        except DatabaseError as e:
+            await interaction.response.send_message(
+                view=QuickLayouts.error("Database Unavailable", str(e)),
+                ephemeral=True,
+            )
+            return False
 
         if not config_data:
             return True  # Allow if no config exists yet
@@ -73,7 +81,14 @@ def is_guild_configured():
         bot = interaction.client
 
         # Get guild config
-        config_data = await bot.db.get_guild_config(interaction.guild.id)
+        try:
+            config_data = await bot.db.get_guild_config(interaction.guild.id)
+        except DatabaseError as e:
+            await interaction.response.send_message(
+                view=QuickLayouts.error("Database Unavailable", str(e)),
+                ephemeral=True,
+            )
+            return False
 
         if not config_data:
             await interaction.response.send_message(

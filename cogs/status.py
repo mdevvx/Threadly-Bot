@@ -9,6 +9,7 @@ import platform
 import psutil
 from datetime import datetime, timezone
 from utils.logger import logger
+from utils.database import DatabaseError
 from utils.layout_builder import ContainerLayout
 from models.guild_config import GuildConfig
 from config.settings import DEFAULT_EMBED_COLOR
@@ -72,7 +73,11 @@ class Status(commands.Cog):
 
             # Guild-specific config, only shown when run inside a server
             if interaction.guild:
-                config_data = await self.bot.db.get_guild_config(interaction.guild.id)
+                try:
+                    config_data = await self.bot.db.get_guild_config(interaction.guild.id)
+                except DatabaseError:
+                    config_data = None
+                    stat_blocks.append("**Server Configuration**\nDatabase unreachable")
                 if config_data:
                     config = GuildConfig.from_dict(config_data)
                     configured = "Yes" if config.is_configured() else "No"

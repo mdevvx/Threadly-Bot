@@ -8,6 +8,15 @@ from config.settings import SUPABASE_URL, SUPABASE_KEY, SUPABASE_SCHEMA
 from utils.logger import logger
 
 
+class DatabaseError(Exception):
+    """
+    Raised when Supabase can't be read from or written to.
+
+    Kept separate from "no row found" so callers never mistake an outage
+    for an unconfigured guild and overwrite real settings with defaults.
+    """
+
+
 class Database:
     """Database handler for Supabase operations"""
 
@@ -54,10 +63,13 @@ class Database:
             guild_id: Discord guild ID
 
         Returns:
-            Guild configuration dictionary or None
+            Guild configuration dictionary, or None if the guild has none yet
+
+        Raises:
+            DatabaseError: if the database can't be reached or queried
         """
         if not self.client:
-            return None
+            raise DatabaseError("Database is not configured (check SUPABASE_URL / SUPABASE_KEY).")
 
         try:
             response = (
@@ -74,7 +86,7 @@ class Database:
 
         except Exception as e:
             logger.error(f"Error fetching guild config for {guild_id}: {e}")
-            return None
+            raise DatabaseError(f"Couldn't load this server's settings from the database: {e}") from e
 
     async def upsert_guild_config(self, guild_id: int, config: Dict[str, Any]) -> bool:
         """
@@ -85,10 +97,14 @@ class Database:
             config: Configuration dictionary
 
         Returns:
-            True if successful, False otherwise
+            True if successful
+
+        Raises:
+            DatabaseError: if the write fails, so callers never report a
+            save that didn't happen
         """
         if not self.client:
-            return False
+            raise DatabaseError("Database is not configured (check SUPABASE_URL / SUPABASE_KEY).")
 
         try:
             # Timestamps are managed by the database (column default +
@@ -106,7 +122,7 @@ class Database:
 
         except Exception as e:
             logger.error(f"Error upserting guild config for {guild_id}: {e}")
-            return False
+            raise DatabaseError(f"Couldn't save this server's settings to the database: {e}") from e
 
     async def update_guild_setting(self, guild_id: int, key: str, value: Any) -> bool:
         """

@@ -11,7 +11,7 @@ import aiohttp
 import traceback
 from config.settings import DISCORD_TOKEN, BOT_PREFIX
 from utils.logger import logger
-from utils.database import db
+from utils.database import db, DatabaseError
 from utils.command_group import threadly_group
 
 
@@ -137,8 +137,14 @@ class WelcomeBot(commands.Bot):
         # Initialize default config for new guild
         from models.guild_config import GuildConfig
 
-        default_config = GuildConfig(guild_id=str(guild.id))
-        await self.db.upsert_guild_config(guild.id, default_config.to_dict())
+        try:
+            # Only create defaults if the guild has no saved config, so
+            # re-inviting the bot doesn't wipe an existing setup.
+            if not await self.db.get_guild_config(guild.id):
+                default_config = GuildConfig(guild_id=str(guild.id))
+                await self.db.upsert_guild_config(guild.id, default_config.to_dict())
+        except DatabaseError as e:
+            logger.error(f"Could not initialize config for guild {guild.id}: {e}")
 
     async def on_guild_remove(self, guild: discord.Guild):
         """Called when bot is removed from a guild"""
@@ -168,7 +174,11 @@ class WelcomeBot(commands.Bot):
             + "".join(traceback.format_exception(type(error), error, error.__traceback__))
         )
 
-        message = "Something went wrong running that command. Please try again."
+        original = getattr(error, "original", error)
+        if isinstance(original, DatabaseError):
+            message = str(original)
+        else:
+            message = "Something went wrong running that command. Please try again."
         try:
             if interaction.response.is_done():
                 await interaction.followup.send(message, ephemeral=True)
