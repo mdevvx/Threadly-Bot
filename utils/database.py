@@ -3,8 +3,8 @@ Supabase database handler for guild configurations
 """
 
 from typing import Optional, Dict, Any
-from supabase import create_async_client, AsyncClient
-from config.settings import SUPABASE_URL, SUPABASE_KEY
+from supabase import create_async_client, AsyncClient, AsyncClientOptions
+from config.settings import SUPABASE_URL, SUPABASE_KEY, SUPABASE_SCHEMA
 from utils.logger import logger
 
 
@@ -34,8 +34,14 @@ class Database:
             return
 
         try:
-            self.client = await create_async_client(SUPABASE_URL, SUPABASE_KEY)
-            logger.info("Supabase client initialized successfully")
+            self.client = await create_async_client(
+                SUPABASE_URL,
+                SUPABASE_KEY,
+                options=AsyncClientOptions(schema=SUPABASE_SCHEMA),
+            )
+            logger.info(
+                f"Supabase client initialized successfully (schema: {SUPABASE_SCHEMA})"
+            )
         except Exception as e:
             logger.error(f"Failed to initialize Supabase client: {e}")
             self.client = None
@@ -85,6 +91,11 @@ class Database:
             return False
 
         try:
+            # Timestamps are managed by the database (column default +
+            # update trigger); sending them as None would wipe created_at.
+            config = {
+                k: v for k, v in config.items() if k not in ("created_at", "updated_at")
+            }
             config["guild_id"] = str(guild_id)
             # Use on_conflict parameter to specify which column to use for conflict resolution
             await self.client.table("threadly_guild_configs").upsert(

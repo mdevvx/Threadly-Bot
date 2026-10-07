@@ -15,6 +15,9 @@ BOT_PREFIX = os.getenv("BOT_PREFIX", "$")
 # Supabase Configuration
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+# Postgres schema holding the bot's tables (must also be
+# listed under "Exposed schemas" in the Supabase API settings)
+SUPABASE_SCHEMA = os.getenv("SUPABASE_SCHEMA", "threadly")
 
 # Logging Configuration
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

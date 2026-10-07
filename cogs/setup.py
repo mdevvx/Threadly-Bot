@@ -12,6 +12,12 @@ from utils.layout_builder import ContainerLayout, QuickLayouts
 from models.guild_config import GuildConfig
 from config.settings import WELCOME_MODE_THREAD, WELCOME_MODE_CHANNEL, DEFAULT_EMBED_COLOR
 from utils.command_group import threadly_group
+from utils.welcome_channel import (
+    MAX_CHANNELS_PER_CATEGORY,
+    format_permission_names,
+    is_category_full,
+    missing_bot_permissions,
+)
 
 
 class Setup(commands.Cog):
@@ -155,13 +161,13 @@ class Setup(commands.Cog):
 
             guild_id = interaction.guild.id
 
-            permissions = category.permissions_for(interaction.guild.me)
-            if not permissions.manage_channels:
+            missing = missing_bot_permissions(category)
+            if missing:
                 await interaction.followup.send(
                     view=QuickLayouts.error(
                         "Missing Permission",
-                        f"I don't have permission to create channels in "
-                        f"**{category.name}**.\nGrant me the **Manage Channels** permission.",
+                        f"To create private welcome channels in **{category.name}** "
+                        f"I need these permissions there:\n{format_permission_names(missing)}",
                     ),
                     ephemeral=True,
                 )
@@ -178,7 +184,17 @@ class Setup(commands.Cog):
             await self.bot.db.upsert_guild_config(guild_id, config.to_dict())
             self.bot.guild_configs[guild_id] = config
 
-            description = f"Welcome channels will be created in **{category.name}**."
+            description = (
+                f"Welcome channels will be created in **{category.name}**.\n"
+                f"Each channel is private: only the new member, roles that can see "
+                f"this category, and roles set via `/threadly setroles` can view it."
+            )
+            if is_category_full(category):
+                description += (
+                    f"\n\n**Warning:** this category already has "
+                    f"{MAX_CHANNELS_PER_CATEGORY} channels (Discord's limit), so new "
+                    f"channels can't be created until some are removed."
+                )
             if config.welcome_mode != WELCOME_MODE_CHANNEL:
                 description += (
                     f"\n\n**Note:** Current mode is **{config.welcome_mode}**. "

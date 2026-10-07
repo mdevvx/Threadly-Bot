@@ -8,6 +8,16 @@ from utils.logger import logger
 from utils.layout_builder import ContainerLayout
 from models.guild_config import GuildConfig
 from config.settings import WELCOME_MODE_THREAD, WELCOME_MODE_CHANNEL
+from utils.welcome_channel import (
+    MAX_CHANNELS_PER_CATEGORY,
+    create_private_channel,
+    ensure_member_access,
+    find_existing_welcome_channel,
+    is_category_full,
+    missing_bot_permissions,
+    sanitize_channel_name,
+    welcome_channel_topic,
+)
 
 
 async def delete_thread_created_message(channel: discord.TextChannel, thread: discord.Thread):
@@ -165,29 +175,46 @@ class Events(commands.Cog):
 
             # Get target category
             category = guild.get_channel(int(config.target_category_id))
-            if not category:
+            if not isinstance(category, discord.CategoryChannel):
                 logger.error(
                     f"Target category {config.target_category_id} not found in guild {guild.id}"
                 )
                 return
 
-            # Check permissions
-            permissions = category.permissions_for(guild.me)
-            if not permissions.manage_channels:
+            # A member who left and rejoined keeps their old channel
+            # instead of getting a duplicate.
+            channel = find_existing_welcome_channel(guild, member)
+            if channel:
+                await ensure_member_access(channel, member)
+                logger.info(
+                    f"Reusing channel {channel.id} for rejoining member {member.id} in guild {guild.id}"
+                )
+                await self._send_welcome_message(channel, member, config)
+                return
+
+            missing = missing_bot_permissions(category)
+            if missing:
                 logger.error(
-                    f"Missing permission to create channels in category {category.id}"
+                    f"Missing permissions in category {category.id} (guild {guild.id}): "
+                    f"{', '.join(missing)}"
                 )
                 return
 
-            # Create channel name (username, sanitized)
-            channel_name = self._sanitize_channel_name(member.name)
+            if is_category_full(category):
+                logger.error(
+                    f"Category {category.id} in guild {guild.id} has reached Discord's "
+                    f"{MAX_CHANNELS_PER_CATEGORY}-channel limit; cannot create channel "
+                    f"for member {member.id}"
+                )
+                return
 
-            # Create the channel
-            channel = await guild.create_text_channel(
-                name=channel_name,
-                category=category,
+            channel = await create_private_channel(
+                member,
+                category,
+                config,
+                name=sanitize_channel_name(member.name),
+                topic=welcome_channel_topic(member),
                 reason=f"Welcome channel for {member.name}",
-                topic=f"Welcome channel for {member.mention}",
             )
 
             logger.info(
@@ -197,8 +224,8 @@ class Events(commands.Cog):
             # Send welcome message/embed
             await self._send_welcome_message(channel, member, config)
 
-        except discord.Forbidden:
-            logger.error(f"Forbidden: Cannot create channel in guild {member.guild.id}")
+        except discord.Forbidden as e:
+            logger.error(f"Forbidden: Cannot create channel in guild {member.guild.id}: {e}")
         except discord.HTTPException as e:
             logger.error(f"HTTP error creating channel: {e}")
         except Exception as e:
@@ -327,33 +354,6 @@ class Events(commands.Cog):
             text = text.replace(placeholder, value)
 
         return text
-
-    def _sanitize_channel_name(self, name: str) -> str:
-        """
-        Sanitize username for channel name (Discord requirements)
-
-        Args:
-            name: Original username
-
-        Returns:
-            Sanitized channel name
-        """
-        # Remove invalid characters for channel names
-        # Discord allows: a-z, 0-9, hyphens
-        sanitized = "".join(c if c.isalnum() or c == "-" else "-" for c in name.lower())
-
-        # Remove consecutive hyphens
-        while "--" in sanitized:
-            sanitized = sanitized.replace("--", "-")
-
-        # Remove leading/trailing hyphens
-        sanitized = sanitized.strip("-")
-
-        # Ensure it's not empty and max 100 characters
-        if not sanitized:
-            sanitized = "welcome-channel"
-
-        return sanitized[:100]
 
 
 async def setup(bot: commands.Bot):

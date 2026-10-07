@@ -37,8 +37,10 @@ A scalable Discord bot that creates personalized welcome threads or channels for
 
 3. **Setup Supabase**
     - Create a new project at [supabase.com](https://supabase.com)
-    - Run the SQL schema from `schema.sql` in the SQL Editor
-    - Copy your Project URL and anon key
+    - Run the SQL schema from `schema.sql` in the SQL Editor (creates the `threadly` schema)
+    - Project Settings → Data API → **Exposed schemas**: add `threadly`
+    - Copy your Project URL and **service_role / secret** key (the anon key has no access)
+    - Moving from an older project? Follow `migrate_data.sql`
 
 4. **Configure environment variables**
     - Copy `.env` and fill in your credentials:
@@ -46,7 +48,8 @@ A scalable Discord bot that creates personalized welcome threads or channels for
 ```env
    DISCORD_TOKEN=your_bot_token_here
    SUPABASE_URL=your_supabase_url
-   SUPABASE_KEY=your_supabase_anon_key
+   SUPABASE_KEY=your_supabase_service_role_key
+   SUPABASE_SCHEMA=threadly
    BOT_PREFIX=$
    LOG_LEVEL=INFO
 ```
